@@ -271,7 +271,7 @@ class Farx {
                 no_args = true;
                 ret_type_name = consume("IDENT").second;
             } else {
-                consume(); // (
+                consume("LPAREN"); // (
                 while (peek().second != ")") {
                     int ptrs = 0;
 
@@ -287,7 +287,7 @@ class Farx {
                         consume(); // ,
                     }
                 }
-                consume(); // )
+                consume("RPAREN"); // )
                 consume(); // :
                 ret_type_name = consume("IDENT").second;
             }
@@ -385,7 +385,7 @@ class Farx {
 
             builder->SetInsertPoint(_else);
             if (peek().second == "else") {
-                consume();
+                consume(); // else
                 consume("LBRACE");
                 while (peek().first != "RBRACE") {
                     parse_stmt();
@@ -472,7 +472,6 @@ class Farx {
                 if (skip) {
                     skip--;
                 } else {
-                    std::cout << token << std::endl;
                     if (ops.count(token + tokens[pos + 1])) {
                         parsed_tokens.push_back({"OP", token+tokens[pos+1]});
                         skip++;
@@ -554,7 +553,7 @@ class Farx {
                 }
             } else if (kind == "LPAREN") {
                 left = parse_expr(0);
-                consume(); // )
+                consume("RPAREN"); // )
             } else {
                 throw std::runtime_error("Unexpected Token: " + val);
             }
@@ -619,9 +618,9 @@ class Farx {
                     Value* ptr = builder->CreateAlloca(type_of, nullptr, v_name.c_str());
                     scope[v_name] = {ptr, type_of};
                 } else {
-                    consume(); // [
+                    consume("LBRACKET"); // [
                     Value* index_val = parse_expr(0)();
-                    consume(); // ]
+                    consume("RBRACKET"); // ]
 
                     ArrayType* arr_type = ArrayType::get(type_of, cast<ConstantInt>(index_val)->getZExtValue());
                     Value* ptr = builder->CreateAlloca(arr_type, nullptr, v_name.c_str());
