@@ -20,6 +20,10 @@ typedef std::deque<token> toklist;
 typedef std::function<Value*(Value*, Value*)> OpHandler;
 typedef std::function<Value*()> ExprFn;
 
+void error_msg(std::string error, int pos) {
+    std::cerr << "\033[31m" << '[' << "POS:" << pos << "] " << error << "\033[0m" << std::endl;
+    std::exit(1);
+}
 
 class Farx {
     public:
@@ -51,19 +55,20 @@ class Farx {
         
         
         Farx(): module(nullptr), cur_func(nullptr), cur_nmsp(""), pos(0) {
-            module = new Module("Hacex", context);
+            module = new Module("Farx", context);
             builder = std::make_unique<IRBuilder<>>(context);
             
-            types["shrt"] = Type::getInt1Ty(context);
+            types["int1"] = Type::getInt1Ty(context);
             types["int8"] = Type::getInt8Ty(context);
             types["int"] = Type::getInt32Ty(context);
-            types["long"] = Type::getInt64Ty(context);
+            types["int64"] = Type::getInt64Ty(context);
             types["void"] = Type::getVoidTy(context);
             types["ptr"] = PointerType::get(context, 0);
+            types["str"] = PointerType::get(context, 0);
 
             ops = {
                 "<<", ">>", "!=", "==", "<=", ">=",
-                "=", ";", "+", "-", "*", "/", "%",
+                "=", "+", "-", "*", "/", "%",
                 "&", "|", "~", "^", "<", ">"
             };
 
@@ -85,13 +90,13 @@ class Farx {
             op_handlers["<="] = {10, [this](Value* a, Value* b) { return builder->CreateICmpSLE(a, b); }};
             op_handlers[">="] = {10, [this](Value* a, Value* b) { return builder->CreateICmpSGE(a, b); }};
 
-            // Work in progress: keywords["namespace"] = [this]() { this->namespace_stmt(); };
+            keywords["namespace"] = [this]() { this->namespace_stmt(); };
             keywords["return"] = [this]() { this->return_stmt(); };
             keywords["struct"] = [this]() { this->struct_stmt(); };
             keywords["while"] = [this]() { this->while_stmt(); };
             keywords["label"] = [this]() { this->label_stmt(); };
             keywords["goto"] = [this]() { this->goto_stmt(); };
-            keywords["else"] = []() { std::runtime_error("Else cannot be used without 'if'"); };
+            keywords["else"] = [this]() { error_msg("'else' cannot be used without 'if'", this->pos); };
             keywords["fn"] = [this]() { this->fn_stmt(); };
             keywords["if"] = [this]() { this->if_stmt(); };
 
@@ -106,6 +111,7 @@ class Farx {
             special_tokens["{"] = "LBRACE";
             special_tokens["}"] = "RBRACE";
             special_tokens[","] = "COMMA";
+            special_tokens[";"] = "SEMI";
         }
 
         ~Farx() {
@@ -126,7 +132,7 @@ class Farx {
                 links++;
             }
 
-            std::string name = consume("IDENT").second;
+            std::string name = consume("IDENT", "Expected name of variable to create pointer").second;
 
             Value* ptr = scope[name].first;
             Type* _type = scope[name].second;
@@ -145,21 +151,21 @@ class Farx {
         }
         // -----------
 
-        // Statements
 
+        // Statements
         void namespace_stmt() {
-            std::string name = consume("IDENT").second;
+            std::string name = consume("IDENT", "Expected name of namespace").second;
 
             if (cur_nmsp != "") {
                 cur_nmsp += "::";
             }
             cur_nmsp += name;
 
-            consume("LBRACE");
+            consume("LBRACE", "Expected start of the namespace block");
             while (peek().first != "RBRACE") {
                 parse_stmt();
             }
-            consume("RBRACE");
+            consume("RBRACE", "Expected end of the namespace block");
 
             std::string suffix = "::" + name;
             if (cur_nmsp.length() >= suffix.length()) {
@@ -167,6 +173,9 @@ class Farx {
             }
             if (cur_nmsp.length() >= 2 && cur_nmsp.substr(cur_nmsp.length() - 2) == "::") {
                 cur_nmsp = cur_nmsp.substr(0, cur_nmsp.length() - 2);
+            }
+            if (cur_nmsp == name) {
+                cur_nmsp.clear();
             }
         }
 
@@ -192,20 +201,20 @@ class Farx {
         }
 
         void struct_stmt() {
-            std::string name = consume("IDENT").second;
+            std::string name = consume("IDENT", "Expected name of new struct type").second;
             std::vector<std::pair<std::string, int>> temp_dict;
 
             if (peek().second == ";") {
-                consume(); // ;
+                consume("SEMI", "Expected ';' at the end of struct prototype"); // ;
                 create_struct_type(name, temp_dict);
             } else {
-                consume("LBRACE"); // {
+                consume("LBRACE", "Expected '{' at the start of the struct type declaration"); // {
                 while (peek().first != "RBRACE") {
-                    std::string _type = consume("IDENT").second;
+                    std::string _type = consume("IDENT", "Expected type in the struct block").second;
                     if (peek().first == "LBRACKET") {
                         consume("LBRACKET"); // [
                         int obj = parse_expr(0)()->ConstantIntVal;
-                        consume("RBRACKET"); // ]
+                        consume("RBRACKET", "Expected ']' at the end of array declaration"); // ]
                         temp_dict.push_back({_type, obj});
                     } else {
                         temp_dict.push_back({_type, 0});
@@ -213,7 +222,7 @@ class Farx {
                 }
             }
             create_struct_type(name, temp_dict);
-            consume("RBRACE");
+            consume("RBRACE", "Expected '}' at the end of struct type declaration");
         }
 
         void while_stmt() {
@@ -224,25 +233,25 @@ class Farx {
             builder->CreateBr(cond);
 
             builder->SetInsertPoint(cond);
-            consume("LPAREN"); // (
+            consume("LPAREN", "Expected '(' at the start of the condition block"); // (
             Value* cond_val = parse_expr(0)();
-            consume("RPAREN"); // )
+            consume("RPAREN", "Expected ')' at the end of condition block"); // )
 
             builder->CreateCondBr(cond_val, body, end);
 
             builder->SetInsertPoint(body);
-            consume("LBRACE");
+            consume("LBRACE", "Expected '{' at the start of body block");
             while (peek().first != "RBRACE") {
                 parse_stmt();
             }
-            consume("RBRACE");
+            consume("RBRACE", "Expected '}' at the end of body block");
 
             builder->CreateBr(cond);
             builder->SetInsertPoint(end);
         }
 
         void label_stmt() {
-            std::string name = consume("IDENT").second;
+            std::string name = consume("IDENT", "Expected name of the new label block").second;
             consume(); // :
             BasicBlock* label_block = BasicBlock::Create(cur_func->getContext(), name, cur_func);
             builder->CreateBr(label_block);
@@ -257,7 +266,7 @@ class Farx {
 
         void fn_stmt() {
             bool no_args = false;
-            std::string func_name = consume("IDENT").second;
+            std::string func_name = consume("IDENT", "Expected name of the new function").second;
             if (cur_nmsp != "") {
                 func_name = cur_nmsp + "::" + func_name;
             }
@@ -269,27 +278,27 @@ class Farx {
             if (peek().second == ":") {
                 consume();
                 no_args = true;
-                ret_type_name = consume("IDENT").second;
+                ret_type_name = consume("IDENT", "Expected return type of the function").second;
             } else {
-                consume("LPAREN"); // (
+                consume("LPAREN", "Expected '(' at the start of function argument list"); // (
                 while (peek().second != ")") {
                     int ptrs = 0;
 
                     // if (peek().second == "<*>") {} not implemented...
-                    std::string arg_type = consume("IDENT").second;
+                    std::string arg_type = consume("IDENT", "Expected type of the argument").second;
                     while (peek().second == "*") {
                         consume("OP");
                         ptrs++;
                     }
-                    std::string arg_name = consume("IDENT").second;
+                    std::string arg_name = consume("IDENT", "Expected name of the argument").second;
                     args.push_back({arg_name, arg_type, ptrs});
                     if (peek().first == "COMMA") {
                         consume(); // ,
                     }
                 }
-                consume("RPAREN"); // )
+                consume("RPAREN", "Expected ')' at the end of the function argument list"); // )
                 consume(); // :
-                ret_type_name = consume("IDENT").second;
+                ret_type_name = consume("IDENT", "Expected return type of the function").second;
             }
 
 
@@ -310,7 +319,7 @@ class Farx {
 
             // Check if this is a function prototype
             if (peek().second == ";") {
-                consume(); // ;
+                consume("SEMI", "Expected ';' at the end of function prototype"); // ;
                 scope.clear();
             } else {
                 BasicBlock* block = BasicBlock::Create(module->getContext(), "entry", cur_func);
@@ -343,11 +352,11 @@ class Farx {
                     }
                 }
 
-                consume("LBRACE"); // {
+                consume("LBRACE", "Expected '{' at the start of the function body block"); // {
                 while (peek().second != "" && peek().first != "RBRACE") {
                     parse_stmt();
                 }
-                consume("RBRACE"); // }
+                consume("RBRACE", "Expected '}' at the end of the function body block"); // }
                 if (!builder->GetInsertBlock()->getTerminator()) {
                     if (ret_type == Type::getVoidTy(module->getContext())) {
                         builder->CreateRetVoid();
@@ -363,11 +372,11 @@ class Farx {
         }
 
         void if_stmt() {
-            consume("LPAREN");
+            consume("LPAREN", "Expected '(' at the start of the condition block");
             Value* cond = parse_expr(0)();
-            consume("RPAREN");
+            consume("RPAREN", "Expected ')' at the end of condition block");
 
-            consume("LBRACE");
+            consume("LBRACE", "Expected '{' at the start of 'if' body block");
 
             BasicBlock* then = BasicBlock::Create(cur_func->getContext(), "if.then", cur_func);
             BasicBlock* _else = BasicBlock::Create(cur_func->getContext(), "if.else", cur_func);
@@ -380,17 +389,17 @@ class Farx {
                 parse_stmt();
             }
 
-            consume("RBRACE");
+            consume("RBRACE", "Expected '}' at the end of 'if' body block");
             builder->CreateBr(merge);
 
             builder->SetInsertPoint(_else);
             if (peek().second == "else") {
                 consume(); // else
-                consume("LBRACE");
+                consume("LBRACE", "Expected '{' at the start of 'else' body block");
                 while (peek().first != "RBRACE") {
                     parse_stmt();
                 }
-                consume("RBRACE");
+                consume("RBRACE", "Expected '}' at the end of 'else' body block");
             }
             builder->CreateBr(merge);
             builder->SetInsertPoint(merge);
@@ -403,13 +412,13 @@ class Farx {
             return tokens[pos];
         }
 
-        token consume(std::string expected="null") {
+        token consume(std::string expected="null", std::string err_msg="null") {
             token tok = peek();
             // std::cerr << std::stacktrace::current()[1] << std::endl; <--- if need debug
         
             if (expected != "null") { // I dont trust nullptr here
                 if (tok.first != expected) {
-                    throw std::runtime_error("Expected " + expected + ", got " + tok.first + " " + tok.second);
+                    error_msg(err_msg, pos);
                 }
             }
             pos++;
@@ -433,6 +442,9 @@ class Farx {
                     while (text[i] != '\n') { // Comments
                         i++;
                     }
+                } else if (c == ':' && text[i+1] == ':') {
+                    current += "::";
+                    i++;
                 } else if (solo_tokens.count(c) && !str) {
                     if (current != "") {
                         tokens.push_back(current);
@@ -498,6 +510,28 @@ class Farx {
             parsed_tokens.push_back({"EOF", ""});
             return parsed_tokens;
         }
+
+        toklist finalize_tokens(toklist tokens) {
+            toklist out_tokens;
+            int skip = 0;
+            int pos = 0;
+
+            for (auto& token: tokens) {
+                if (skip) {
+                    skip--;
+                } else {
+                    if (token.second == "::") {
+                        std::string prev = out_tokens.back().second;
+                        std::string next = tokens[pos+1].second;
+                        out_tokens.push_back({"IDENT", prev + "::" + next});
+                    } else {
+                        out_tokens.push_back(token);
+                    }
+                    pos++;
+                }
+            }
+            return out_tokens;
+        }
         // ------
 
         std::function<Value*()> parse_expr(int min_prec=0) {
@@ -525,7 +559,7 @@ class Farx {
                     }
                     left = [this, val, gep]() {
                         if (!scope.count(val)) {
-                            throw std::runtime_error("Usage of undeclared variable: " + val);
+                            error_msg("Usage of undeclared variable: " + val, pos);
                         }
                         return this->builder->CreateLoad(types["int"], gep);
                     };
@@ -539,9 +573,9 @@ class Farx {
                             arg_fns.push_back(parse_expr(0));
                         }
                     }
-                    consume("RPAREN"); // )
+                    consume("RPAREN", "Expected ')' at the end of function call"); // )
                     left = [this, val, arg_fns]() {
-                        if (!funcs.count(val)) throw std::runtime_error("Call to unknown function " + val);
+                        if (!funcs.count(val)) error_msg("Call to unknown function " + val, pos);
                         std::vector<Value*> evaled_args;
                         for (auto& fn: arg_fns) {
                             evaled_args.push_back(fn());
@@ -553,9 +587,9 @@ class Farx {
                 }
             } else if (kind == "LPAREN") {
                 left = parse_expr(0);
-                consume("RPAREN"); // )
+                consume("RPAREN", "Expected ')' at the end of expression"); // )
             } else {
-                throw std::runtime_error("Unexpected Token: " + val);
+                error_msg("Unexpected Token: " + val, pos);
             }
             while (peek().first == "OP") {
                 std::string op_val = peek().second;
@@ -583,49 +617,47 @@ class Farx {
                 Value* val = parse_expr(0)();
                 builder->CreateStore(val, obj);
             }
-            
+
             if (kind == "IDENT" && types.count(val)) {
                 int ptrs = 0;
+
                 while (peek().second == "*") {
-                    consume("OP"); // *
+                    consume(); // *
                     ptrs++;
                 }
 
-                std::string v_name = consume("IDENT").second;
-                Type* type_of = types[val];
+                Type* _type = types[val];
+                std::string name = consume("IDENT").second;
+                Value* ptr;
 
-                for (int i = 0; i < ptrs; i++) {
-                    type_of = PointerType::get(context, 0);
-                }
-
-                if (peek().second == "=") {
+                if (peek().second == ";") {
+                    // Prototype
+                    ptr = builder->CreateAlloca(_type, nullptr, name);
+                } else if (peek().second == "=") {
+                    // Declaration
                     consume("OP"); // =
-
-                    Value* ptr;
-                    Value* val = parse_expr(0)();
+                    
+                    Value* value = parse_expr(0)();
 
                     if (!builder) {
-                        Constant* init_val = dyn_cast<Constant>(val);
-                        ptr = new GlobalVariable(*module, type_of, false, GlobalVariable::ExternalLinkage,
-                        init_val ? init_val : Constant::getNullValue(type_of), v_name.c_str());
+                        Constant* init_val = dyn_cast<Constant>(value);
+                        ptr = new GlobalVariable(*module, _type, false, GlobalVariable::ExternalLinkage,
+                        init_val ? init_val : Constant::getNullValue(_type), name);
                     } else {
-                        ptr = builder->CreateAlloca(type_of, nullptr, v_name.c_str());
-                        builder->CreateStore(val, ptr);
+                        ptr = builder->CreateAlloca(_type, nullptr, name);
+                        builder->CreateStore(value, ptr);
                     }
-                    scope[v_name] = {ptr, type_of};
-                } else if (peek().second == ";") {
-                    consume(); // ;
-                    Value* ptr = builder->CreateAlloca(type_of, nullptr, v_name.c_str());
-                    scope[v_name] = {ptr, type_of};
+
                 } else {
                     consume("LBRACKET"); // [
                     Value* index_val = parse_expr(0)();
-                    consume("RBRACKET"); // ]
+                    consume("RBRACKET", "Expected ']' at the end of array declaration"); // ]
 
-                    ArrayType* arr_type = ArrayType::get(type_of, cast<ConstantInt>(index_val)->getZExtValue());
-                    Value* ptr = builder->CreateAlloca(arr_type, nullptr, v_name.c_str());
-                    scope[v_name] = {ptr, arr_type};
+                    _type = ArrayType::get(_type, cast<ConstantInt>(index_val)->getZExtValue());
+                    ptr = builder->CreateAlloca(_type, nullptr, name);
                 }
+
+                scope[name] = {ptr, _type};
             } else if (kind == "IDENT" && scope.count(val)) {
                 if (peek().first == "LBRACKET") {
                     Value* item_ptr = _parse_index(scope[val].first);
@@ -636,12 +668,11 @@ class Farx {
                     Value* new_item = parse_expr(0)();
                     builder->CreateStore(new_item, item_ptr);
                 } else {
-                    consume("OP");
+                    consume("OP"); // =
                     Value* new_val = parse_expr(0)();
                     builder->CreateStore(new_val, scope[val].first);
                 }
-            }
-            else if (kind == "KEYWORD" && keywords.count(val)) {
+            } else if (kind == "KEYWORD" && keywords.count(val)) {
                 keywords[val]();
             } else {
                 if (!special_tokens.count(val)) {
@@ -653,7 +684,9 @@ class Farx {
 
         // Main function
         std::string compile(std::string code_text) {
-            tokens = parse_tokens(split_tokens(code_text));
+            tokens = finalize_tokens(parse_tokens(split_tokens(code_text)));
+            int t = 0;
+
             pos = 0;
 
             while(peek().first != "EOF") {
@@ -668,7 +701,7 @@ class Farx {
 
         // Other things...
         inline Value* _load_var(std::string name) {
-            if (!scope.count(name)) throw std::runtime_error(R"(Usage of undeclared variable: ")" + name + '"');
+            if (!scope.count(name)) error_msg("Usage of undeclared variable: '" + name + "'", pos);
             Type* _type = scope[name].second;
             Value* ptr = scope[name].first;
             return builder->CreateLoad(_type, ptr, name.c_str());
@@ -698,7 +731,7 @@ class Farx {
         inline Value* _parse_index(Value* ptr_obj) {
             consume("LBRACKET"); // [
             Value* index = parse_expr(0)();
-            consume("RBRACKET"); // ]
+            consume("RBRACKET", "Expected ']' at the end of index"); // ]
 
             Constant* zero = ConstantInt::get(Type::getInt32Ty(module->getContext()), 0);
             return builder->CreateGEP(types["int"], ptr_obj, {index});
