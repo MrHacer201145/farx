@@ -41,6 +41,7 @@ class Farx {
         std::string cur_nmsp;
 
         std::unordered_map<std::string, std::pair<Value*, Type*>> scope;
+        std::unordered_set<std::string> locals;
         std::unordered_map<std::string, Function*> funcs;
         std::unordered_map<std::string, BasicBlock*> labels;
 
@@ -270,7 +271,7 @@ class Farx {
             if (cur_nmsp != "") {
                 func_name = cur_nmsp + "::" + func_name;
             }
-            std::vector<std::tuple<std::string, std::string, int>> args;
+            std::vector<std::tuple<std::string, Type*>> args;
             std::vector<Type*> arg_types;
             std::string ret_type_name;
 
@@ -282,16 +283,15 @@ class Farx {
             } else {
                 consume("LPAREN", "Expected '(' at the start of function argument list"); // (
                 while (peek().second != ")") {
-                    int ptrs = 0;
 
                     // if (peek().second == "<*>") {} not implemented...
-                    std::string arg_type = consume("IDENT", "Expected type of the argument").second;
-                    while (peek().second == "*") {
-                        consume("OP");
-                        ptrs++;
-                    }
+                    std::string arg_type_name = consume("IDENT", "Expected type of the argument").second;
+                    Type* arg_type = types[arg_type_name];
+
+                    arg_type = _parse_pointer(arg_type);
+
                     std::string arg_name = consume("IDENT", "Expected name of the argument").second;
-                    args.push_back({arg_name, arg_type, ptrs});
+                    args.push_back({arg_name, arg_type});
                     if (peek().first == "COMMA") {
                         consume(); // ,
                     }
@@ -303,10 +303,7 @@ class Farx {
 
 
             for (const auto& arg: args) {
-                Type* _type = types[std::get<1>(arg)]; // arg name
-                for (int i = 0; i < std::get<2>(arg); i++) {
-                    _type = PointerType::get(context, 0);
-                }
+                Type* _type = std::get<1>(arg); // arg name
                 arg_types.push_back(_type);
             }
 
@@ -330,18 +327,9 @@ class Farx {
                     int i = 0;
                     for (const auto& arg: args) {
                         const auto& name = std::get<0>(arg);
-                        const auto& ptrs_val = std::get<2>(arg);
-                        Type* _type = types[std::get<1>(arg)];
-                        for (int j = 0; j < ptrs_val; j++) {
-                            _type = PointerType::get(context, 0);
-                        }
-                        if (ptrs_val != 0) {
-                            Value* ptr = builder->CreateAlloca(_type, nullptr, name.c_str());
-                            builder->CreateStore(cur_func->getArg(i), ptr);
-                            scope[name] = {ptr, _type};
-                        } else {
-                            scope[name] = {cur_func->getArg(i), _type};
-                        }
+                        Type* _type = std::get<1>(arg);
+                        scope[name] = {cur_func->getArg(i), _type};
+                        locals.insert(name);
                         i++;
                     }
                 }
@@ -367,6 +355,7 @@ class Farx {
                 }
                 builder = nullptr;
                 labels.clear();
+                locals.clear();
                 scope = variables_snapshot;
             }
         }
@@ -428,7 +417,7 @@ class Farx {
 
 
         // Parser
-        std::deque<std::string> split_tokens(std::string text) {
+        std::deque<std::string> split_text(std::string text) {
             std::deque<std::string> tokens;
             std::string current;
             bool str = false;
@@ -469,7 +458,7 @@ class Farx {
                 }
             }
 
-            if (current != "" && current != " ") { // Do not add emptry token
+            if (current != "" && current != " ") { // If it is an empty token - skip
                 tokens.push_back(current);
             }
 
@@ -511,7 +500,7 @@ class Farx {
             return parsed_tokens;
         }
 
-        toklist finalize_tokens(toklist tokens) {
+        toklist parse_namespaces(toklist tokens) {
             toklist out_tokens;
             int skip = 0;
             int pos = 0;
@@ -619,14 +608,9 @@ class Farx {
             }
 
             if (kind == "IDENT" && types.count(val)) {
-                int ptrs = 0;
-
-                while (peek().second == "*") {
-                    consume(); // *
-                    ptrs++;
-                }
-
                 Type* _type = types[val];
+                _type = _parse_pointer(_type);
+
                 std::string name = consume("IDENT").second;
                 Value* ptr;
 
@@ -684,7 +668,7 @@ class Farx {
 
         // Main function
         std::string compile(std::string code_text) {
-            tokens = finalize_tokens(parse_tokens(split_tokens(code_text)));
+            tokens = parse_namespaces(parse_tokens(split_text(code_text)));
             int t = 0;
 
             pos = 0;
@@ -704,6 +688,9 @@ class Farx {
             if (!scope.count(name)) error_msg("Usage of undeclared variable: '" + name + "'", pos);
             Type* _type = scope[name].second;
             Value* ptr = scope[name].first;
+            if (locals.count(name)) {
+                return ptr;
+            }
             return builder->CreateLoad(_type, ptr, name.c_str());
         }
 
@@ -735,6 +722,15 @@ class Farx {
 
             Constant* zero = ConstantInt::get(Type::getInt32Ty(module->getContext()), 0);
             return builder->CreateGEP(types["int"], ptr_obj, {index});
+        }
+        
+        inline Type* _parse_pointer(Type* _type) {
+            int ptrs = 0;
+            while (peek().second == "*") {
+                consume(); // *
+                _type = PointerType::get(_type->getContext(), 0);
+            }
+            return _type;
         }
 };
 
