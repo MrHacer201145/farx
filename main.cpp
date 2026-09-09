@@ -25,6 +25,13 @@ void error_msg(std::string error, int pos) {
     std::exit(1);
 }
 
+template <typename T1, typename T2, typename T3>
+struct triple {
+    T1 first;
+    T2 second;
+    T3 third;  
+};
+
 class Farx {
     public:
         LLVMContext context;
@@ -40,8 +47,7 @@ class Farx {
         Function* cur_func;
         std::string cur_nmsp;
 
-        std::unordered_map<std::string, std::pair<Value*, Type*>> scope;
-        std::unordered_set<std::string> locals;
+        std::unordered_map<std::string, triple<Value*, Type*, bool>> scope;
         std::unordered_map<std::string, Function*> funcs;
         std::unordered_map<std::string, BasicBlock*> labels;
 
@@ -328,8 +334,7 @@ class Farx {
                     for (const auto& arg: args) {
                         const auto& name = std::get<0>(arg);
                         Type* _type = std::get<1>(arg);
-                        scope[name] = {cur_func->getArg(i), _type};
-                        locals.insert(name);
+                        scope[name] = {cur_func->getArg(i), _type, true};
                         i++;
                     }
                 }
@@ -355,7 +360,6 @@ class Farx {
                 }
                 builder = nullptr;
                 labels.clear();
-                locals.clear();
                 scope = variables_snapshot;
             }
         }
@@ -641,7 +645,7 @@ class Farx {
                     ptr = builder->CreateAlloca(_type, nullptr, name);
                 }
 
-                scope[name] = {ptr, _type};
+                scope[name] = {ptr, _type, false};
             } else if (kind == "IDENT" && scope.count(val)) {
                 if (peek().first == "LBRACKET") {
                     Value* item_ptr = _parse_index(scope[val].first);
@@ -688,7 +692,8 @@ class Farx {
             if (!scope.count(name)) error_msg("Usage of undeclared variable: '" + name + "'", pos);
             Type* _type = scope[name].second;
             Value* ptr = scope[name].first;
-            if (locals.count(name)) {
+            bool is_local = scope[name].third;
+            if (is_local) {
                 return ptr;
             }
             return builder->CreateLoad(_type, ptr, name.c_str());
