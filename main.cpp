@@ -59,7 +59,7 @@ class Farx {
                                         '~', '{', '}', '='};
         std::unordered_set<char> skip_tokens = {'\n', '\t', ' '};
         std::unordered_map<std::string, std::string> special_tokens;
-        
+
         
         Farx(): module(nullptr), cur_func(nullptr), cur_nmsp(""), pos(0) {
             module = new Module("Farx", context);
@@ -211,6 +211,8 @@ class Farx {
             std::string name = consume("IDENT", "Expected name of new struct type").second;
             std::vector<std::pair<std::string, int>> temp_dict;
 
+            name = _make_name(name);
+
             if (peek().second == ";") {
                 consume("SEMI", "Expected ';' at the end of struct prototype"); // ;
                 create_struct_type(name, temp_dict);
@@ -222,8 +224,10 @@ class Farx {
                         consume("LBRACKET"); // [
                         int obj = parse_expr(0)()->ConstantIntVal;
                         consume("RBRACKET", "Expected ']' at the end of array declaration"); // ]
+                        consume(); // ;
                         temp_dict.push_back({_type, obj});
                     } else {
+                        consume(); // ;
                         temp_dict.push_back({_type, 0});
                     }
                 }
@@ -274,9 +278,7 @@ class Farx {
         void fn_stmt() {
             bool no_args = false;
             std::string func_name = consume("IDENT", "Expected name of the new function").second;
-            if (cur_nmsp != "") {
-                func_name = cur_nmsp + "::" + func_name;
-            }
+            func_name = _make_name(func_name);
             std::vector<std::tuple<std::string, Type*>> args;
             std::vector<Type*> arg_types;
             std::string ret_type_name;
@@ -289,8 +291,6 @@ class Farx {
             } else {
                 consume("LPAREN", "Expected '(' at the start of function argument list"); // (
                 while (peek().second != ")") {
-
-                    // if (peek().second == "<*>") {} not implemented...
                     std::string arg_type_name = consume("IDENT", "Expected type of the argument").second;
                     Type* arg_type = types[arg_type_name];
 
@@ -631,6 +631,7 @@ class Farx {
                         Constant* init_val = dyn_cast<Constant>(value);
                         ptr = new GlobalVariable(*module, _type, false, GlobalVariable::ExternalLinkage,
                         init_val ? init_val : Constant::getNullValue(_type), name);
+                        name = _make_name(name);
                     } else {
                         ptr = builder->CreateAlloca(_type, nullptr, name);
                         builder->CreateStore(value, ptr);
@@ -673,8 +674,6 @@ class Farx {
         // Main function
         std::string compile(std::string code_text) {
             tokens = parse_namespaces(parse_tokens(split_text(code_text)));
-            int t = 0;
-
             pos = 0;
 
             while(peek().first != "EOF") {
@@ -721,11 +720,11 @@ class Farx {
         }
 
         inline Value* _parse_index(Value* ptr_obj) {
+            // Parses index and returns value at index in obj
             consume("LBRACKET"); // [
             Value* index = parse_expr(0)();
             consume("RBRACKET", "Expected ']' at the end of index"); // ]
 
-            Constant* zero = ConstantInt::get(Type::getInt32Ty(module->getContext()), 0);
             return builder->CreateGEP(types["int"], ptr_obj, {index});
         }
         
@@ -736,6 +735,12 @@ class Farx {
                 _type = PointerType::get(_type->getContext(), 0);
             }
             return _type;
+        }
+
+        inline std::string _make_name(std::string name) {
+            if (cur_nmsp != "")
+                return cur_nmsp + "::" + name;
+            return name;
         }
 };
 
