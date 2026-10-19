@@ -104,6 +104,7 @@ class Farx {
             keywords["label"] = [this]() { this->label_stmt(); };
             keywords["goto"] = [this]() { this->goto_stmt(); };
             keywords["else"] = [this]() { error_msg("'else' cannot be used without 'if'", this->pos); };
+            keywords["enum"] = [this]() { this->enum_stmt(); };
             keywords["fn"] = [this]() { this->fn_stmt(); };
             keywords["if"] = [this]() { this->if_stmt(); };
 
@@ -163,10 +164,7 @@ class Farx {
         void namespace_stmt() {
             std::string name = consume("IDENT", "Expected name of namespace").second;
 
-            if (cur_nmsp != "") {
-                cur_nmsp += "::";
-            }
-            cur_nmsp += name;
+            _set_namespace(name);
 
             consume("LBRACE", "Expected start of the namespace block");
             while (peek().first != "RBRACE") {
@@ -174,16 +172,7 @@ class Farx {
             }
             consume("RBRACE", "Expected end of the namespace block");
 
-            std::string suffix = "::" + name;
-            if (cur_nmsp.length() >= suffix.length()) {
-                cur_nmsp = cur_nmsp.substr(0, cur_nmsp.length() - suffix.length());
-            }
-            if (cur_nmsp.length() >= 2 && cur_nmsp.substr(cur_nmsp.length() - 2) == "::") {
-                cur_nmsp = cur_nmsp.substr(0, cur_nmsp.length() - 2);
-            }
-            if (cur_nmsp == name) {
-                cur_nmsp.clear();
-            }
+            _exit_namespace(name);
         }
 
         void return_stmt() {
@@ -273,6 +262,25 @@ class Farx {
         void goto_stmt() {
             std::string name = consume("IDENT").second;
             builder->CreateBr(labels[name]); // goto to label with "name" in current label scope
+        }
+
+        void enum_stmt() {
+            std::string name = consume("IDENT").second;
+            int cur_num = 0;
+
+            _set_namespace(name);
+
+            consume(); // {
+            while (peek().first != "RBRACE") {
+                std::string obj_name = consume("IDENT").second;
+                if (peek().first == "COMMA")
+                    consume();
+                scope[_make_name(obj_name)] = {ConstantInt::get(types["int"], cur_num), types["int"], true};
+                cur_num++;
+            }
+            consume(); // }
+
+            _exit_namespace(name);
         }
 
         void fn_stmt() {
@@ -676,7 +684,8 @@ class Farx {
             tokens = parse_namespaces(parse_tokens(split_text(code_text)));
             pos = 0;
 
-            while(peek().first != "EOF") {
+            // Parsing statements until EOF (end of file)
+            while (peek().first != "EOF") {
                 parse_stmt();
             }
 
@@ -737,10 +746,30 @@ class Farx {
             return _type;
         }
 
+        inline void _set_namespace(std::string name) {
+            if (cur_nmsp != "") {
+                cur_nmsp += "::";
+            }
+            cur_nmsp += name;
+        }
+
         inline std::string _make_name(std::string name) {
             if (cur_nmsp != "")
                 return cur_nmsp + "::" + name;
             return name;
+        }
+        
+        inline void _exit_namespace(std::string name) {
+            std::string suffix = "::" + name;
+            if (cur_nmsp.length() >= suffix.length()) {
+                cur_nmsp = cur_nmsp.substr(0, cur_nmsp.length() - suffix.length());
+            }
+            if (cur_nmsp.length() >= 2 && cur_nmsp.substr(cur_nmsp.length() - 2) == "::") {
+                cur_nmsp = cur_nmsp.substr(0, cur_nmsp.length() - 2);
+            }
+            if (cur_nmsp == name) {
+                cur_nmsp.clear();
+            }
         }
 };
 
