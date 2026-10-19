@@ -94,7 +94,7 @@ fn main(): int {
 }
 ```
 
-Namespaces
+Namespace
 ```
 fn puts: int;
 
@@ -111,6 +111,26 @@ namespace i {
 fn main(): int {
     i::like::cpp::main()
     return 0
+}
+```
+
+Enum
+```
+fn printf: int;
+fn puts: int;
+
+enum foo {
+    bar,
+    not_bar
+}
+
+fn main(): int {
+    printf("%i", foo::bar)
+    puts("")
+    printf("%i", foo::not_bar)
+    puts("")
+    // \n is currently not working, so instead we are using puts()
+    return 0;
 }
 ```
 
