@@ -162,15 +162,15 @@ class Farx {
 
         // Statements
         void namespace_stmt() {
-            std::string name = consume("IDENT", "Expected name of namespace").second;
+            std::string name = consume("IDENT", "Expected name at the start of namespace declaration").second;
 
             _set_namespace(name);
 
-            consume("LBRACE", "Expected start of the namespace block");
+            consume("LBRACE", "Expected '{' at the start of the '" + name + "' body block");
             while (peek().first != "RBRACE") {
                 parse_stmt();
             }
-            consume("RBRACE", "Expected end of the namespace block");
+            consume("RBRACE", "Expected '}' at the end of the '" + name + "' body block");
 
             _exit_namespace(name);
         }
@@ -197,18 +197,18 @@ class Farx {
         }
 
         void struct_stmt() {
-            std::string name = consume("IDENT", "Expected name of new struct type").second;
+            std::string name = consume("IDENT", "Expected name at the start of struct declaration").second;
             std::vector<std::pair<std::string, int>> temp_dict;
 
             name = _make_name(name);
 
             if (peek().second == ";") {
-                consume("SEMI", "Expected ';' at the end of struct prototype"); // ;
+                consume("SEMI"); // ;
                 create_struct_type(name, temp_dict);
             } else {
-                consume("LBRACE", "Expected '{' at the start of the struct type declaration"); // {
+                consume("LBRACE", "Expected '{' at the start of the '" + name + "' body block"); // {
                 while (peek().first != "RBRACE") {
-                    std::string _type = consume("IDENT", "Expected type in the struct block").second;
+                    std::string _type = consume("IDENT", "Expected type in the '" + name + "' body block").second;
                     if (peek().first == "LBRACKET") {
                         consume("LBRACKET"); // [
                         int obj = parse_expr(0)()->ConstantIntVal;
@@ -222,7 +222,7 @@ class Farx {
                 }
             }
             create_struct_type(name, temp_dict);
-            consume("RBRACE", "Expected '}' at the end of struct type declaration");
+            consume("RBRACE", "Expected '}' at the end of the '" + name + "' body block");
         }
 
         void while_stmt() {
@@ -240,18 +240,18 @@ class Farx {
             builder->CreateCondBr(cond_val, body, end);
 
             builder->SetInsertPoint(body);
-            consume("LBRACE", "Expected '{' at the start of body block");
+            consume("LBRACE", "Expected '{' at the start of the body block");
             while (peek().first != "RBRACE") {
                 parse_stmt();
             }
-            consume("RBRACE", "Expected '}' at the end of body block");
+            consume("RBRACE", "Expected '}' at the end of the body block");
 
             builder->CreateBr(cond);
             builder->SetInsertPoint(end);
         }
 
         void label_stmt() {
-            std::string name = consume("IDENT", "Expected name of the new label block").second;
+            std::string name = consume("IDENT", "Expected name at the start of label declaration").second;
             consume(); // :
             BasicBlock* label_block = BasicBlock::Create(cur_func->getContext(), name, cur_func);
             builder->CreateBr(label_block);
@@ -260,17 +260,17 @@ class Farx {
         }
 
         void goto_stmt() {
-            std::string name = consume("IDENT").second;
+            std::string name = consume("IDENT", "Expected name of label to do 'goto' operation").second;
             builder->CreateBr(labels[name]); // goto to label with "name" in current label scope
         }
 
         void enum_stmt() {
-            std::string name = consume("IDENT").second;
+            std::string name = consume("IDENT", "Expected name at the start of enum declaration").second;
             int cur_num = 0;
 
             _set_namespace(name);
 
-            consume(); // {
+            consume("LBRACE", "Expected '{' at the start of the '" + name + "' body block"); // {
             while (peek().first != "RBRACE") {
                 std::string obj_name = consume("IDENT").second;
                 if (peek().first == "COMMA")
@@ -278,7 +278,7 @@ class Farx {
                 scope[_make_name(obj_name)] = {ConstantInt::get(types["int"], cur_num), types["int"], true};
                 cur_num++;
             }
-            consume(); // }
+            consume("RBRACE", "Expected '}' at the end of the '" + name + "' body block"); // }
 
             _exit_namespace(name);
         }
